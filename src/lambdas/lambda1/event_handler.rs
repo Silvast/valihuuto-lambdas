@@ -5,15 +5,16 @@ use chrono::{DateTime, FixedOffset, Utc, TimeZone, Duration};
 use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_config;
 use dotenv::dotenv;
+use aws_config::BehaviorVersion;
 
 
 
 async fn update_last_checked_date(client: &DynamoClient, date: DateTime<FixedOffset>) -> Result<(), Error> {
-    // Convert the DateTime to RFC3339 string format
+    
     let date_str = date.to_rfc3339();
     println!("Updating lastchecked to: {}", date_str);
     
-    // Update the item in DynamoDB
+    
     let result = client
         .update_item()
         .table_name("Valihuuto")
@@ -42,7 +43,7 @@ async fn get_last_checked_date(client: &DynamoClient) -> Result<DateTime<FixedOf
         println!("Item: {:?}", item.get("lastchecked").unwrap().as_s().unwrap());
         Ok(DateTime::parse_from_rfc3339(item.get("lastchecked").unwrap().as_s().unwrap())?)
     } else {
-        // If no item was found, return today's date minus two days
+        
         let yesterday = Utc::now().checked_sub_signed(Duration::days(1))
             .expect("Date calculation should not fail");
         Ok(DateTime::parse_from_rfc3339(&yesterday.to_rfc3339())?)
@@ -51,15 +52,23 @@ async fn get_last_checked_date(client: &DynamoClient) -> Result<DateTime<FixedOf
 
 pub(crate)async fn function_handler(event: LambdaEvent<EventBridgeEvent>) -> Result<(), Error> {
 
-    let client = DynamoClient::new(&aws_config::load_from_env().await);
+    let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    let client = DynamoClient::new(&config);
+    
     let date = get_last_checked_date(&client).await?;
     let items = get_feed(date).await.map_err(|e| Error::from(format!("Feed error: {}", e)))?;
     
-    for item in &items {
+  
+    for (index, item) in items.iter().enumerate() {
+        println!("Processing item {}/{}: {}", index + 1, items.len(), item.title().unwrap_or_default());
         edit_memo(item).await.map_err(|e| Error::from(format!("Edit memo error: {}", e)))?;
+        
+        
+        if index < items.len() - 1 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
     }
     
-    // Convert Utc::now() to DateTime<FixedOffset> using with_timezone
     let current_time = Utc::now();
     let fixed_offset_time = current_time.with_timezone(&FixedOffset::east_opt(0).unwrap());
     
