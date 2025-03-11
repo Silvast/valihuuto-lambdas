@@ -2,7 +2,11 @@
 
 huutojalambda is a Rust project that implements an AWS Lambda function in Rust.
 
-The idea is to fetch new memos from the Parliament of Finland open database, 
+The idea is to fetch new memos from the open database of the Parliament of Finland.
+
+![image](resources/blueskybot.drawio.png)
+
+
 ## Prerequisites
 
 - [Rust](https://www.rust-lang.org/tools/install)
