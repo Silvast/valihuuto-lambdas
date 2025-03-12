@@ -31,10 +31,37 @@ pub fn find_text_between_brackets(input: &str) -> Vec<String> {
     results
 }
 
-pub async fn fetch_memo(url: &str) -> String {
-    let response = reqwest::get(url).await.unwrap();
-    let body = response.text().await.unwrap();
-    body
+pub async fn fetch_memo(url: &str) -> Result<String, Box<dyn Error>> {
+    println!("Fetching memo from URL: {}", url);
+    
+    let response = match reqwest::get(url).await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                return Err(format!("API returned error status: {}", resp.status()).into());
+            }
+            resp
+        },
+        Err(e) => {
+            println!("Error fetching memo: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+    
+    let body = match response.text().await {
+        Ok(text) => {
+            println!("Response body length: {} bytes", text.len());
+            if text.trim().is_empty() {
+                return Err("API returned empty response".into());
+            }
+            text
+        },
+        Err(e) => {
+            println!("Error parsing response body: {}", e);
+            return Err(Box::new(e));
+        }
+    };
+    
+    Ok(body)
 }
 
 pub async fn get_feed(date: DateTime<FixedOffset>) -> Result<Vec<Item>, Box<dyn Error>> {
@@ -122,22 +149,44 @@ pub async fn send_to_sqs(item: &Item, shout_data: &[String]) -> Result<(), Box<d
     
 pub async fn edit_memo(item: &Item) -> Result<(), Box<dyn Error>> {
     dotenv().ok();
-    let eduskunta_db_url = std::env::var("EDUSKUNTA_DB_URL").unwrap();
+    // Load and verify environment variables are set
+    let eduskunta_db_url = match std::env::var("EDUSKUNTA_DB_URL") {
+        Ok(url) => {
+            println!("EDUSKUNTA_DB_URL: {}", url);
+            url
+        },
+        Err(e) => {
+            println!("Error loading EDUSKUNTA_DB_URL: {}", e);
+            return Err(format!("Environment variable EDUSKUNTA_DB_URL not set: {}", e).into());
+        }
+    };
 
     let suffix = encode(item.title().unwrap_or_default()).to_string();
     let url = format!("{}{}", eduskunta_db_url, suffix);
+    println!("Full URL: {}", url);
+
+    // Fetch the memo with proper error handling
+    let content = match fetch_memo(&url).await {
+        Ok(content) => content,
+        Err(e) => {
+            println!("Failed to fetch memo: {}", e);
+            return Err(format!("Failed to fetch memo: {}", e).into());
+        }
+    };
 
     let memo = Memo {
         title: item.title().unwrap_or_default().to_string(),
         link: item.link().unwrap_or_default().to_string(),
         description: item.description().unwrap_or_default().to_string(),
-        content: String::from(fetch_memo(&url).await),
+        content: content,
     };
 
+    // Parse JSON with better error reporting
     let json_data: Value = match serde_json::from_str(&memo.content) {
         Ok(data) => data,
         Err(err) => {
-
+            println!("JSON parsing error: {}. Content starts with: '{}'", 
+                    err, &memo.content.chars().take(100).collect::<String>());
             return Err(Box::new(err));
         }
     };
