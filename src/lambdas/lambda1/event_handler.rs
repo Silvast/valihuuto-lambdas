@@ -58,13 +58,12 @@ pub(crate)async fn function_handler(event: LambdaEvent<EventBridgeEvent>) -> Res
     let date = get_last_checked_date(&client).await?;
     let items = get_feed(date).await.map_err(|e| Error::from(format!("Feed error: {}", e)))?;
     
-  
-    for (index, item) in items.iter().enumerate() {
+    for (rev_index, item) in items.iter().rev().enumerate() {
+        let index = items.len() - 1 - rev_index;
         println!("Processing item {}/{}: {}", index + 1, items.len(), item.title().unwrap_or_default());
         edit_memo(item).await.map_err(|e| Error::from(format!("Edit memo error: {}", e)))?;
         
-        
-        if index < items.len() - 1 {
+        if rev_index < items.len() - 1 {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
         }
     }
