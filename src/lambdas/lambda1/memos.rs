@@ -9,6 +9,9 @@ use aws_sdk_sqs::Client as SqsClient;
 use aws_config::BehaviorVersion;
 use serde_json::json;
 use dotenv::dotenv;
+use reqwest::header::{HeaderMap, USER_AGENT};
+
+
 
 #[derive(Debug)]
 pub struct Memo
@@ -33,8 +36,16 @@ pub fn find_text_between_brackets(input: &str) -> Vec<String> {
 
 pub async fn fetch_memo(url: &str) -> Result<String, Box<dyn Error>> {
     println!("Fetching memo from URL: {}", url);
-    
-    let response = match reqwest::get(url).await {
+
+    // Create a custom User-Agent string
+    let custom_user_agent = "MyCustomUserAgent/1.0";
+
+    // Create a client and set headers properly
+    let client = reqwest::Client::new();
+    let response = match client.get(url)
+        .header(USER_AGENT, custom_user_agent)
+        .send()
+        .await {
         Ok(resp) => {
             if !resp.status().is_success() {
                 return Err(format!("API returned error status: {}", resp.status()).into());
@@ -149,23 +160,15 @@ pub async fn send_to_sqs(item: &Item, shout_data: &[String]) -> Result<(), Box<d
     
 pub async fn edit_memo(item: &Item) -> Result<(), Box<dyn Error>> {
     dotenv().ok();
-    // Load and verify environment variables are set
-    let eduskunta_db_url = match std::env::var("EDUSKUNTA_DB_URL") {
-        Ok(url) => {
-            println!("EDUSKUNTA_DB_URL: {}", url);
-            url
-        },
-        Err(e) => {
-            println!("Error loading EDUSKUNTA_DB_URL: {}", e);
-            return Err(format!("Environment variable EDUSKUNTA_DB_URL not set: {}", e).into());
-        }
-    };
+
+    let eduskunta_db_url = std::env::var("EDUSKUNTA_DB_URL")
+        .map_err(|e| format!("Environment variable EDUSKUNTA_DB_URL not set: {}", e))?;
 
     let suffix = encode(item.title().unwrap_or_default()).to_string();
     let url = format!("{}{}", eduskunta_db_url, suffix);
     println!("Full URL: {}", url);
 
-    // Fetch the memo with proper error handling
+   
     let content = match fetch_memo(&url).await {
         Ok(content) => content,
         Err(e) => {
@@ -181,7 +184,6 @@ pub async fn edit_memo(item: &Item) -> Result<(), Box<dyn Error>> {
         content: content,
     };
 
-    // Parse JSON with better error reporting
     let json_data: Value = match serde_json::from_str(&memo.content) {
         Ok(data) => data,
         Err(err) => {
@@ -203,8 +205,11 @@ pub async fn edit_memo(item: &Item) -> Result<(), Box<dyn Error>> {
 
     println!("Shouts: {:?}", shout_data);
     
-  
-    send_to_sqs(item, &shout_data).await?;
+    if !shout_data.is_empty() {
+        send_to_sqs(item, &shout_data).await?;
+    } else {
+        println!("No shouts found, skipping SQS message");
+    }
     
     Ok(())
 }
